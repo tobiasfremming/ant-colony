@@ -2,6 +2,69 @@
 
 using Random
 
+# Repair function for unscheduled patients.
+# Ensures every unscheduled patient is assigned to exactly one nurse route.
+function repairUnscheduled!(instance::MyDataStructures.Instance, unscheduled::Vector{Int})
+    for p in unscheduled
+        # Double-check that p is not already assigned.
+        already_assigned = any(p in nurse.route for nurse in instance.nurses)
+        if already_assigned
+            continue
+        end
+
+        assigned = false
+
+        # First, try to assign the patient to a nurse with an empty route.
+        for nurse in instance.nurses
+            if isempty(nurse.route)
+                push!(nurse.route, p)
+                println("Assigned unscheduled patient $p to nurse $(nurse.id) (empty route).")
+                assigned = true
+                break
+            end
+        end
+
+        if assigned
+            continue
+        end
+
+        # If no empty route is available, try to insert into existing routes.
+        best_cost_increase = Inf
+        best_insertion = nothing  # Will hold (nurse, insertion_position)
+        for nurse in instance.nurses
+            current_route = nurse.route
+            # Consider every possible insertion position (from 1 to end+1).
+            for pos in 1:(length(current_route) + 1)
+                new_route = copy(current_route)
+                insert!(new_route, pos, p)
+                cost_new = route_cost(new_route, instance)
+                cost_current = route_cost(current_route, instance)
+                cost_increase = cost_new - cost_current
+                if cost_increase < best_cost_increase
+                    best_cost_increase = cost_increase
+                    best_insertion = (nurse, pos)
+                end
+            end
+        end
+
+        if best_insertion !== nothing
+            (selected_nurse, pos) = best_insertion
+            insert!(selected_nurse.route, pos, p)
+            println("Inserted unscheduled patient $p into nurse $(selected_nurse.id)'s route at position $pos.")
+            assigned = true
+        end
+
+        # If, for some reason, no insertion was found, force assign to the first nurse.
+        if !assigned
+            println("Forcing insertion of unscheduled patient $p into nurse $(instance.nurses[1].id)'s route at the end.")
+            push!(instance.nurses[1].route, p)
+        end
+    end
+    return
+end
+
+
+
 # Mutation operator 1: Swap one patient between two nurses.
 function mutation_swap_one!(instance::MyDataStructures.Instance)
     n_nurses = length(instance.nurses)
@@ -52,6 +115,7 @@ function mutation_swap_multiple!(instance::MyDataStructures.Instance; block_leng
         nurseA.route[startA + i] = blockB[i + 1]
         nurseB.route[startB + i] = blockA[i + 1]
     end
+
 end
 
 
@@ -81,3 +145,8 @@ function mutation_move_one!(instance::MyDataStructures.Instance)
     pos_recipient = isempty(recipient.route) ? 1 : rand(1:length(recipient.route)+1)
     insert!(recipient.route, pos_recipient, patient)
 end
+
+
+
+
+# Add heurisitc mutation

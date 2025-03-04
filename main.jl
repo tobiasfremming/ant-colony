@@ -1,11 +1,12 @@
 
 include("data_structures.jl")
-include("ACO.jl")
+include("ant_cluster.jl")
 include("visualization.jl")
 include("mutation.jl")
+include("crossover.jl")
 
 using Main.MyDataStructures
-using .ACO
+
 using .Visualization
 
 
@@ -49,7 +50,7 @@ Finally, the fitness is defined as the inverse of (1 + total_cost), so that lowe
 function calculateFitness(instance::MyDataStructures.Instance)
     # Penalty factors (adjust as needed)
     
-    penalty_time = 1000.0   # penalty per time unit of lateness (either patient end_time or depot return)
+    penalty_time = 100000.0   # penalty per time unit of lateness (either patient end_time or depot return)
     penalty_capacity = 1000.0  # penalty per unit of capacity exceeded
     
     total_travel_time = 0.0
@@ -103,6 +104,7 @@ function calculateFitness(instance::MyDataStructures.Instance)
         if capacity_used > nurse.capacity
             total_penalty += (capacity_used - nurse.capacity) * penalty_capacity
         end
+        nurse.current_demand = capacity_used
 
         total_travel_time += route_travel_time
     end
@@ -112,6 +114,7 @@ function calculateFitness(instance::MyDataStructures.Instance)
 
     # Define fitness so that lower total cost gives higher fitness.
     fitness = 1.0 / (1.0 + total_cost)
+    instance.fitness = fitness
     return fitness
 end
 
@@ -119,12 +122,22 @@ function applyRandomMutation!(instance::MyDataStructures.Instance)
     r = rand()
     if r < 0.33
         mutation_swap_one!(instance)
-    elseif r < 0.66
+    elseif r < 0.85
         # Here, block_length is set to 2; you can tweak or randomize it.
         mutation_swap_multiple!(instance; block_length = 2)
     else
         mutation_move_one!(instance)
     end
+end
+
+# Select two random parents from the population.
+function selectRandomParents(population::Vector{MyDataStructures.Instance})
+    n = length(population)
+    if n < 2
+        error("Population must contain at least two individuals.")
+    end
+    idxs = randperm(n)[1:2]
+    return population[idxs[1]], population[idxs[2]]
 end
 
 function runGA(initial_instance::MyDataStructures.Instance;
@@ -134,6 +147,8 @@ function runGA(initial_instance::MyDataStructures.Instance;
     population = [deepcopy(initial_instance) for _ in 1:population_size]
     best_fitness = -Inf
     best_individual = nothing
+
+    
 
     for generation in 1:num_generations
         fitnesses = [calculateFitness(instance) for instance in population]
@@ -152,10 +167,18 @@ function runGA(initial_instance::MyDataStructures.Instance;
 
         children = []
         for s in survivors
-            child = deepcopy(s)
+            parent1, parent2 = selectRandomParents(survivors)
+            #child = crossoverInstances(parent1, parent2)
+            child = deepcopy(parent1)
             applyRandomMutation!(child)
+            
             push!(children, child)
         end
+
+        # for child in children
+        #     for 
+        #     child, _ = constructRouteStrict(child.)
+        # end
 
         # New population is survivors plus children.
         new_population = vcat(survivors, children)
@@ -172,17 +195,84 @@ function runGA(initial_instance::MyDataStructures.Instance;
 end
 
 
+# Check the constraint violations for a single nurse.
+function checkNurseConstraintViolations(nurse::MyDataStructures.Nurse, instance::MyDataStructures.Instance)
+    violations = String[]
+    current_time = 0.0
+    current_node = 0  # Start at depot (node 0)
+    capacity_used = 0.0
+
+    for patient_id in nurse.route
+        # Travel from current_node to next patient.
+        travel_time = instance.travel_times[current_node + 1, patient_id + 1]
+        current_time += travel_time
+
+        # Retrieve patient info.
+        patient = instance.patients[patient_id]
+
+        # If arriving too early, wait until the patient's start time.
+        if current_time < patient.start_time
+            current_time = patient.start_time
+        end
+
+        # Check if nurse is too late to start patient care.
+        if current_time > patient.end_time
+            push!(violations, "Late arrival at patient $(patient.id) (arrival: $(current_time), deadline: $(patient.end_time))")
+        end
+
+        # Add the care time.
+        current_time += patient.care_time
+
+        # Update capacity usage and check capacity constraint.
+        capacity_used += patient.demand
+        if capacity_used > nurse.capacity
+            push!(violations, "Capacity exceeded (used: $(capacity_used), capacity: $(nurse.capacity))")
+        end
+
+        # Set current node to this patient.
+        current_node = patient_id
+    end
+
+    # Add travel time back to depot.
+    travel_time = instance.travel_times[current_node + 1, 1]
+    current_time += travel_time
+
+    # Check depot return time constraint.
+    if current_time > instance.depot_return_time
+        push!(violations, "Depot return exceeded (arrival: $(current_time), depot return time: $(instance.depot_return_time))")
+    end
+
+    return violations
+end
+
+# Loop over all nurses in the instance and print constraint violations.
+function checkAllNursesConstraints(instance::MyDataStructures.Instance)
+    for nurse in instance.nurses
+        violations = checkNurseConstraintViolations(nurse, instance)
+        if !isempty(violations)
+            println("Nurse $(nurse.id) violates constraints:")
+            for v in violations
+                println("  - ", v)
+            end
+        else
+            println("Nurse $(nurse.id) meets all constraints.")
+        end
+    end
+end
+
+
+
 function main()
-    instance = MyDataStructures.parseInstance("train/train_0.json")
+    instance = MyDataStructures.parseInstance("train/train_9.json")
     println("Parsed instance successfully!")
 
-    ACOInitialization.assignPatientsWithACO!(instance)
+    assignPatientsWithACO!(instance)
     println("Assigned patients using Ant Colony Optimization:")
     for nurse in instance.nurses
         println("Nurse $(nurse.id): $(nurse.route)")
     end
     
-    best_instance, best_fitness = runGA(instance, num_generations=10000, population_size=100)
+    best_instance, best_fitness = runGA(instance, num_generations=100000, population_size=50)
     println("Best fitness: ", best_fitness)
     println("Best solution (nurse routes):")
     for nurse in best_instance.nurses
@@ -190,6 +280,7 @@ function main()
     end
     Visualization.plotNurseRoutes(best_instance)
     println(computeTotalTravelLength(best_instance))
+    print(checkAllNursesConstraints(instance))
 end
 
 main()

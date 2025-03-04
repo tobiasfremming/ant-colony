@@ -16,6 +16,7 @@ module MyDataStructures
         id::Int
         capacity::Float64
         route::Vector{Int}  # Represents a sequence of patients (permutation)
+        current_demand::Float64
     end
 
     mutable struct Instance
@@ -43,7 +44,7 @@ module MyDataStructures
         patients = [Patient(parse(Int, String(k)), v[:demand], v[:start_time], v[:end_time], v[:care_time], v[:x_coord], v[:y_coord]) 
                     for (k, v) in pairs(json_data[:patients])]
 
-        nurses = [Nurse(i, json_data[:capacity_nurse], []) for i in 1:json_data[:nbr_nurses]]
+        nurses = [Nurse(i, json_data[:capacity_nurse], [], 0.0) for i in 1:json_data[:nbr_nurses]]
 
         # Convert JSON3 nested array to a standard Julia matrix
         travel_times = reduce(hcat, [collect(Float64, row) for row in json_data[:travel_times]])'
